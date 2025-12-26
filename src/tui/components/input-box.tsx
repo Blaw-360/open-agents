@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, memo } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import type { AutoAcceptMode } from "../types.js";
@@ -32,7 +32,28 @@ function getAutoAcceptColor(mode: AutoAcceptMode): string {
   }
 }
 
-export function InputBox({ onSubmit, autoAcceptMode, onToggleAutoAccept, disabled = false }: InputBoxProps) {
+// Memoized auto-accept indicator
+const AutoAcceptIndicator = memo(function AutoAcceptIndicator({
+  mode
+}: {
+  mode: AutoAcceptMode;
+}) {
+  return (
+    <Box marginTop={0}>
+      <Text color={getAutoAcceptColor(mode)}>
+        ▸▸ {getAutoAcceptLabel(mode)}
+      </Text>
+      <Text color="gray"> (shift+tab to cycle)</Text>
+    </Box>
+  );
+});
+
+export const InputBox = memo(function InputBox({
+  onSubmit,
+  autoAcceptMode,
+  onToggleAutoAccept,
+  disabled = false
+}: InputBoxProps) {
   const [value, setValue] = useState("");
 
   useInput((input, key) => {
@@ -72,12 +93,7 @@ export function InputBox({ onSubmit, autoAcceptMode, onToggleAutoAccept, disable
       </Box>
 
       {/* Auto-accept indicator */}
-      <Box marginTop={0}>
-        <Text color={getAutoAcceptColor(autoAcceptMode)}>
-          ▸▸ {getAutoAcceptLabel(autoAcceptMode)}
-        </Text>
-        <Text color="gray"> (shift+tab to cycle)</Text>
-      </Box>
+      <AutoAcceptIndicator mode={autoAcceptMode} />
     </Box>
   );
-}
+});

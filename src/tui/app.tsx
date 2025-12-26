@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, memo } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import type { ToolLoopAgent, UIMessage } from "ai";
 import { isToolUIPart, getToolName } from "ai";
@@ -14,79 +14,195 @@ type AppProps = {
   options?: TUIOptions;
 };
 
+// Memoized text part component
+const TextPart = memo(function TextPart({ text }: { text: string }) {
+  return (
+    <Box>
+      <Text>● </Text>
+      <Text wrap="wrap">{text}</Text>
+    </Box>
+  );
+});
+
+// Memoized reasoning part component
+const ReasoningPart = memo(function ReasoningPart({ text }: { text: string }) {
+  return (
+    <Box marginLeft={2}>
+      <Text color="gray" dimColor wrap="wrap">
+        {text}
+      </Text>
+    </Box>
+  );
+});
+
+// Tool wrapper - not memoized to allow spinner animations
+function ToolPartWrapper({ part }: { part: UIMessage["parts"][number] }) {
+  if (!isToolUIPart(part)) return null;
+  return <ToolCall part={part} />;
+}
+
 function renderPart(part: UIMessage["parts"][number], key: string) {
   // Handle tool parts (both static and dynamic)
   if (isToolUIPart(part)) {
-    return <ToolCall key={key} part={part} />;
+    return <ToolPartWrapper key={key} part={part} />;
   }
 
   switch (part.type) {
     case "text":
       if (!part.text) return null;
-      return (
-        <Box key={key}>
-          <Text>
-            <Text color="white">● </Text>
-            {part.text}
-          </Text>
-        </Box>
-      );
+      return <TextPart key={key} text={part.text} />;
 
     case "reasoning":
       if (!part.text) return null;
-      return (
-        <Box key={key}>
-          <Text color="blue" dimColor>
-            {part.text}
-          </Text>
-        </Box>
-      );
+      return <ReasoningPart key={key} text={part.text} />;
 
     default:
       return null;
   }
 }
 
-function renderMessage(message: UIMessage) {
+// Memoized user message component
+const UserMessage = memo(function UserMessage({ message }: { message: UIMessage }) {
+  const text = message.parts
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+
+  return (
+    <Box marginTop={1} marginBottom={1}>
+      <Text color="magenta" bold>
+        &gt;{" "}
+      </Text>
+      <Text color="white" bold>
+        {text}
+      </Text>
+    </Box>
+  );
+});
+
+// Memoized assistant message component
+const AssistantMessage = memo(function AssistantMessage({ message }: { message: UIMessage }) {
+  return (
+    <Box flexDirection="column">
+      {message.parts.map((part, index) =>
+        renderPart(part, `${message.id}-${index}`)
+      )}
+    </Box>
+  );
+});
+
+// Memoized message renderer
+const Message = memo(function Message({ message }: { message: UIMessage }) {
   if (message.role === "user") {
-    // Get text from user message parts
-    const text = message.parts
-      .filter((p): p is { type: "text"; text: string } => p.type === "text")
-      .map((p) => p.text)
-      .join("");
-
-    return (
-      <Box key={message.id} marginTop={1} marginBottom={1}>
-        <Text color="magenta" bold>
-          &gt;{" "}
-        </Text>
-        <Text color="white" bold>
-          {text}
-        </Text>
-      </Box>
-    );
+    return <UserMessage message={message} />;
   }
-
   if (message.role === "assistant") {
-    return (
-      <Box key={message.id} flexDirection="column">
-        {message.parts.map((part, index) =>
-          renderPart(part, `${message.id}-${index}`)
-        )}
-      </Box>
-    );
+    return <AssistantMessage message={message} />;
   }
-
   return null;
-}
+});
 
 const AUTO_ACCEPT_MODES: AutoAcceptMode[] = ["off", "edits", "all"];
+
+// Isolated timer component to prevent re-renders of entire app
+const Timer = memo(function Timer({
+  isStreaming,
+  startTime
+}: {
+  isStreaming: boolean;
+  startTime: number | null;
+}) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (isStreaming && startTime) {
+      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+      const timer = setInterval(() => {
+        setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
+      return () => clearInterval(timer);
+    } else {
+      setElapsedSeconds(0);
+    }
+  }, [isStreaming, startTime]);
+
+  return elapsedSeconds;
+});
+
+// Memoized messages list
+const MessagesList = memo(function MessagesList({ messages }: { messages: UIMessage[] }) {
+  return (
+    <Box flexDirection="column">
+      {messages.map((message) => (
+        <Message key={message.id} message={message} />
+      ))}
+    </Box>
+  );
+});
+
+// Memoized error display
+const ErrorDisplay = memo(function ErrorDisplay({ error }: { error: Error | undefined }) {
+  if (!error) return null;
+  return (
+    <Box marginTop={1}>
+      <Text color="red">Error: {error.message}</Text>
+    </Box>
+  );
+});
+
+// Hook to get status text - memoized computation
+function useStatusText(messages: UIMessage[]): string {
+  return useMemo(() => {
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage?.role === "assistant") {
+      // Iterate from end to find latest running tool
+      for (let i = lastMessage.parts.length - 1; i >= 0; i--) {
+        const p = lastMessage.parts[i];
+        if (p && isToolUIPart(p) && (p.state === "input-available" || p.state === "input-streaming")) {
+          return `${getToolName(p)}...`;
+        }
+      }
+    }
+    return "Thinking...";
+  }, [messages]);
+}
+
+// Isolated streaming status bar with its own timer
+const StreamingStatusBar = memo(function StreamingStatusBar({
+  messages,
+  startTime
+}: {
+  messages: UIMessage[];
+  startTime: number | null;
+}) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const statusText = useStatusText(messages);
+
+  useEffect(() => {
+    if (startTime) {
+      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+      const timer = setInterval(() => {
+        setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+    return undefined;
+  }, [startTime]);
+
+  return (
+    <StatusBar
+      isStreaming={true}
+      elapsedSeconds={elapsedSeconds}
+      tokens={0}
+      status={statusText}
+    />
+  );
+});
 
 export function App({ agent, options }: AppProps) {
   const { exit } = useApp();
   const [autoAcceptMode, setAutoAcceptMode] = useState<AutoAcceptMode>("edits");
   const [startTime, setStartTime] = useState<number | null>(null);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const transport = useMemo(
     () =>
@@ -102,16 +218,6 @@ export function App({ agent, options }: AppProps) {
   });
 
   const isStreaming = status === "streaming" || status === "submitted";
-
-  // Timer for elapsed seconds
-  useEffect(() => {
-    if (isStreaming && startTime) {
-      const timer = setInterval(() => {
-        setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
-      }, 1000);
-      return () => clearInterval(timer);
-    }
-  }, [isStreaming, startTime]);
 
   // Handle escape key to abort
   useInput((input, key) => {
@@ -140,7 +246,6 @@ export function App({ agent, options }: AppProps) {
     (prompt: string) => {
       if (!isStreaming) {
         setStartTime(Date.now());
-        setElapsedSeconds(0);
         sendMessage({ text: prompt });
       }
     },
@@ -155,42 +260,17 @@ export function App({ agent, options }: AppProps) {
     });
   }, []);
 
-  // Get status text based on current activity
-  const getStatusText = () => {
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.role === "assistant") {
-      const runningTool = lastMessage.parts.find(
-        (p) => isToolUIPart(p) && (p.state === "input-available" || p.state === "input-streaming")
-      );
-      if (runningTool && isToolUIPart(runningTool)) {
-        return `${getToolName(runningTool)}...`;
-      }
-    }
-    return "Thinking...";
-  };
-
   return (
-    <Box flexDirection="column" padding={0}>
+    <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
       {/* Render all messages */}
-      <Box flexDirection="column">
-        {messages.map((message) => renderMessage(message))}
+      <MessagesList messages={messages} />
 
-        {/* Error display */}
-        {error && (
-          <Box marginTop={1}>
-            <Text color="red">Error: {error.message}</Text>
-          </Box>
-        )}
-      </Box>
+      {/* Error display */}
+      <ErrorDisplay error={error} />
 
       {/* Status bar (only when streaming) */}
       {isStreaming && (
-        <StatusBar
-          isStreaming={isStreaming}
-          elapsedSeconds={elapsedSeconds}
-          tokens={0}
-          status={getStatusText()}
-        />
+        <StreamingStatusBar messages={messages} startTime={startTime} />
       )}
 
       {/* Input box */}

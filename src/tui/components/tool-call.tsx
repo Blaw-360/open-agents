@@ -1,6 +1,5 @@
-import React from "react";
+import React, { memo, useState, useEffect } from "react";
 import { Box, Text } from "ink";
-import Spinner from "ink-spinner";
 import type { ToolUIPart, DynamicToolUIPart } from "ai";
 import { getToolName } from "ai";
 
@@ -17,22 +16,22 @@ function formatToolDisplay(toolName: string, input: unknown): { name: string; su
     case "read":
       return {
         name: "Read",
-        summary: `${inputObj.file_path || inputObj.path || ""}`,
+        summary: `${inputObj.filePath || inputObj.file_path || inputObj.path || ""}`,
       };
     case "write":
       return {
         name: "Write",
-        summary: `${inputObj.file_path || inputObj.path || ""}`,
+        summary: `${inputObj.filePath || inputObj.file_path || inputObj.path || ""}`,
       };
     case "edit":
       return {
         name: "Update",
-        summary: `${inputObj.file_path || inputObj.path || ""}`,
+        summary: `${inputObj.filePath || inputObj.file_path || inputObj.path || ""}`,
       };
     case "glob":
       return {
-        name: "List",
-        summary: `${inputObj.pattern || inputObj.path || ""}`,
+        name: "Search",
+        summary: `pattern: "${inputObj.pattern || ""}"`,
       };
     case "grep":
       return {
@@ -80,8 +79,11 @@ function formatOutput(toolName: string, output: unknown): string {
 
   switch (toolName) {
     case "read":
-      if (outputObj.lineCount) {
-        return `Read ${outputObj.lineCount} lines`;
+      if (outputObj.totalLines) {
+        return `Read ${outputObj.totalLines} lines`;
+      }
+      if (outputObj.endLine && outputObj.startLine) {
+        return `Read ${Number(outputObj.endLine) - Number(outputObj.startLine) + 1} lines`;
       }
       return "File read";
     case "glob":
@@ -112,6 +114,51 @@ function formatOutput(toolName: string, output: unknown): string {
   }
 }
 
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER_INTERVAL = 80;
+
+// Custom spinner with internal animation state
+function ToolSpinner() {
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFrame((prev) => (prev + 1) % SPINNER_FRAMES.length);
+    }, SPINNER_INTERVAL);
+    return () => clearInterval(timer);
+  }, []);
+
+  return <Text color="yellow">{SPINNER_FRAMES[frame]} </Text>;
+}
+
+// Memoized completed output display
+const ToolOutput = memo(function ToolOutput({
+  toolName,
+  output
+}: {
+  toolName: string;
+  output: unknown;
+}) {
+  return (
+    <Box paddingLeft={2}>
+      <Text color="gray">└ </Text>
+      <Text color="white">{String(formatOutput(toolName, output))}</Text>
+      <Text color="gray"> (ctrl+o to expand)</Text>
+    </Box>
+  );
+});
+
+// Memoized error display
+const ToolError = memo(function ToolError({ errorText }: { errorText: string }) {
+  return (
+    <Box paddingLeft={2}>
+      <Text color="gray">└ </Text>
+      <Text color="red">Error: {errorText.slice(0, 80)}</Text>
+    </Box>
+  );
+});
+
+// Not memoized to allow spinner animation to work
 export function ToolCall({ part }: ToolCallProps) {
   const toolName = getToolName(part);
   const { name, summary } = formatToolDisplay(toolName, part.input);
@@ -123,18 +170,15 @@ export function ToolCall({ part }: ToolCallProps) {
   const dotColor = isRunning ? "yellow" : isSuccess ? "green" : "red";
 
   return (
-    <Box flexDirection="column" marginBottom={0}>
+    <Box flexDirection="column" marginTop={1} marginBottom={1}>
       {/* Main tool line */}
       <Box>
         {isRunning ? (
-          <Text color="yellow">
-            <Spinner type="dots" />
-          </Text>
+          <ToolSpinner />
         ) : (
-          <Text color={dotColor}>●</Text>
+          <Text color={dotColor}>● </Text>
         )}
-        <Text> </Text>
-        <Text bold>{name}</Text>
+        <Text bold color={isRunning ? "yellow" : "white"}>{name}</Text>
         <Text color="gray">(</Text>
         <Text color="cyan">{summary}</Text>
         <Text color="gray">)</Text>
@@ -142,19 +186,12 @@ export function ToolCall({ part }: ToolCallProps) {
 
       {/* Output line (if completed) */}
       {isSuccess && part.output !== undefined && (
-        <Box marginLeft={2}>
-          <Text color="gray">└ </Text>
-          <Text>{String(formatOutput(toolName, part.output))}</Text>
-          <Text color="gray"> (ctrl+r to expand)</Text>
-        </Box>
+        <ToolOutput toolName={toolName} output={part.output} />
       )}
 
       {/* Error line (if error) */}
       {isError && "errorText" in part && part.errorText !== undefined && (
-        <Box marginLeft={2}>
-          <Text color="gray">└ </Text>
-          <Text color="red">Error: {part.errorText.slice(0, 80)}</Text>
-        </Box>
+        <ToolError errorText={part.errorText} />
       )}
     </Box>
   );
