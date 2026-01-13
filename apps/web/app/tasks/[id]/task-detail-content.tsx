@@ -14,7 +14,6 @@ import {
   Square,
   X,
   Archive,
-  Share2,
   GitPullRequest,
   FolderGit2,
   MoreVertical,
@@ -40,11 +39,7 @@ import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
 import type { WebAgentUIToolPart, WebAgentUIMessagePart } from "@/app/types";
 import type { TaskToolUIPart } from "@open-harness/agent";
 
-import {
-  useTaskChatContext,
-  type SandboxInfo,
-  type ReconnectionStatus,
-} from "./task-context";
+import { useTaskChatContext, type SandboxInfo } from "./task-context";
 import { DiffViewer } from "./diff-viewer";
 import { useFileSuggestions } from "@/hooks/use-file-suggestions";
 import { FileSuggestionsDropdown } from "@/components/file-suggestions-dropdown";
@@ -313,7 +308,6 @@ function SandboxInputOverlay({
   sandboxInfo,
   isCreating,
   isRestoring,
-  timeRemaining,
   hasSnapshot,
   onRestore,
   onCreateNew,
@@ -321,7 +315,6 @@ function SandboxInputOverlay({
   sandboxInfo: SandboxInfo | null;
   isCreating: boolean;
   isRestoring: boolean;
-  timeRemaining: number | null;
   hasSnapshot: boolean;
   onRestore: () => void;
   onCreateNew: () => void;
@@ -403,6 +396,8 @@ export function TaskDetailContent() {
     hadInitialMessages,
     diffRefreshKey,
     triggerDiffRefresh,
+    diffCache,
+    fetchDiff,
     fileCache,
     fetchFiles,
     triggerFileRefresh,
@@ -471,42 +466,45 @@ export function TaskDetailContent() {
     }
   }, [sandboxInfo, task.id, clearSandboxInfo]);
 
-  const saveSnapshot = async (
-    sandboxId: string,
-  ): Promise<{
-    success: boolean;
-    downloadUrl?: string;
-    createdAt?: number;
-  }> => {
-    try {
-      const response = await fetch("/api/sandbox/snapshot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sandboxId,
-          taskId: task.id,
-        }),
-      });
+  const saveSnapshot = useCallback(
+    async (
+      sandboxId: string,
+    ): Promise<{
+      success: boolean;
+      downloadUrl?: string;
+      createdAt?: number;
+    }> => {
+      try {
+        const response = await fetch("/api/sandbox/snapshot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sandboxId,
+            taskId: task.id,
+          }),
+        });
 
-      if (!response.ok) {
-        const error = (await response.json()) as { error?: string };
-        console.error("Failed to save snapshot:", error.error);
+        if (!response.ok) {
+          const error = (await response.json()) as { error?: string };
+          console.error("Failed to save snapshot:", error.error);
+          return { success: false };
+        }
+        const data = (await response.json()) as {
+          downloadUrl: string;
+          createdAt: number;
+        };
+        return {
+          success: true,
+          downloadUrl: data.downloadUrl,
+          createdAt: data.createdAt,
+        };
+      } catch (err) {
+        console.error("Failed to save snapshot:", err);
         return { success: false };
       }
-      const data = (await response.json()) as {
-        downloadUrl: string;
-        createdAt: number;
-      };
-      return {
-        success: true,
-        downloadUrl: data.downloadUrl,
-        createdAt: data.createdAt,
-      };
-    } catch (err) {
-      console.error("Failed to save snapshot:", err);
-      return { success: false };
-    }
-  };
+    },
+    [task.id],
+  );
 
   const handleSaveAndKill = useCallback(async () => {
     if (!sandboxInfo || isSavingSnapshotRef.current) return;
@@ -523,7 +521,7 @@ export function TaskDetailContent() {
     }
     // Kill sandbox after saving (regardless of save success)
     await handleKillSandbox();
-  }, [sandboxInfo, updateTaskSnapshot, handleKillSandbox]);
+  }, [sandboxInfo, updateTaskSnapshot, handleKillSandbox, saveSnapshot]);
 
   const handleExtendSandbox = async () => {
     if (!sandboxInfo) return;
@@ -815,6 +813,20 @@ export function TaskDetailContent() {
     }
   }, [sandboxInfo, fileCache.data, fileCache.isLoading, fetchFiles]);
 
+  // Fetch diff proactively (from sandbox or cached) to show stats in header
+  useEffect(() => {
+    // Fetch on mount (for cached data) or when sandbox/diffRefreshKey changes
+    if (!diffCache.isLoading && diffCache.lastFetchedKey !== diffRefreshKey) {
+      fetchDiff(sandboxInfo?.sandboxId);
+    }
+  }, [
+    sandboxInfo?.sandboxId,
+    diffRefreshKey,
+    diffCache.isLoading,
+    diffCache.lastFetchedKey,
+    fetchDiff,
+  ]);
+
   if (error) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -881,18 +893,26 @@ export function TaskDetailContent() {
               <Archive className="mr-2 h-4 w-4" />
               Archive
             </Button>
-            <Button variant="ghost" size="sm">
-              <Share2 className="mr-2 h-4 w-4" />
-              Share
-            </Button>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setShowDiffPanel(!showDiffPanel)}
-              disabled={!sandboxInfo}
+              disabled={!sandboxInfo && !task.cachedDiff}
             >
               <GitCompare className="mr-2 h-4 w-4" />
               Diff
+              {diffCache.data &&
+                (diffCache.data.summary.totalAdditions > 0 ||
+                  diffCache.data.summary.totalDeletions > 0) && (
+                  <span className="ml-2 text-xs">
+                    <span className="text-green-500">
+                      +{diffCache.data.summary.totalAdditions}
+                    </span>{" "}
+                    <span className="text-red-400">
+                      -{diffCache.data.summary.totalDeletions}
+                    </span>
+                  </span>
+                )}
             </Button>
             {task?.cloneUrl ? (
               // Task has a repo - show PR buttons
@@ -1175,7 +1195,6 @@ export function TaskDetailContent() {
                 sandboxInfo={sandboxInfo}
                 isCreating={isCreatingSandbox}
                 isRestoring={isRestoringSnapshot}
-                timeRemaining={sandboxTimeRemaining}
                 hasSnapshot={!!task.snapshotUrl}
                 onRestore={handleRestoreSnapshot}
                 onCreateNew={handleCreateNewSandbox}
@@ -1300,9 +1319,9 @@ export function TaskDetailContent() {
       )}
 
       {/* Diff Viewer Panel */}
-      {showDiffPanel && sandboxInfo && (
+      {showDiffPanel && (sandboxInfo || Boolean(task.cachedDiff)) && (
         <DiffViewer
-          sandboxId={sandboxInfo.sandboxId}
+          sandboxId={sandboxInfo?.sandboxId}
           refreshKey={diffRefreshKey}
           onClose={() => setShowDiffPanel(false)}
         />
