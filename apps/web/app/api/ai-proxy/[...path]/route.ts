@@ -103,6 +103,7 @@ async function handleProxyRequest(
   }
 
   const gatewayToken = process.env.VERCEL_OIDC_TOKEN;
+  console.log(process.env.VERCEL_OIDC_TOKEN);
   if (!gatewayToken) {
     console.error("AI proxy missing VERCEL_OIDC_TOKEN:", {
       requestId,
