@@ -10,6 +10,7 @@ import {
 import type { OpenHarnessAgentCallOptions } from "@open-harness/agent";
 import { getWorkflowMetadata, getWritable } from "workflow";
 import { getRun } from "workflow/api";
+import { addLanguageModelUsage } from "./usage-utils";
 import type {
   WebAgentMessageMetadata,
   WebAgentStepFinishMetadata,
@@ -65,15 +66,6 @@ const convertMessages = async (
 const generateId = async () => {
   "use step";
   return generateIdAi();
-};
-
-const addUsage = async (
-  a: LanguageModelUsage,
-  b: LanguageModelUsage,
-): Promise<LanguageModelUsage> => {
-  "use step";
-  const { addLanguageModelUsage } = await import("@open-harness/agent");
-  return addLanguageModelUsage(a, b);
 };
 
 export async function runAgentWorkflow(options: Options) {
@@ -139,7 +131,7 @@ export async function runAgentWorkflow(options: Options) {
 
       if (result.stepUsage) {
         totalUsage = totalUsage
-          ? await addUsage(totalUsage, result.stepUsage)
+          ? addLanguageModelUsage(totalUsage, result.stepUsage)
           : result.stepUsage;
       }
 
