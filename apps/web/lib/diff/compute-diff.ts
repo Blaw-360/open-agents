@@ -45,11 +45,14 @@ export class DiffComputationError extends Error {
   }
 }
 
+export type DiffScope = "all" | "uncommitted";
+
 export async function computeAndCacheDiff(params: {
   sandbox: Sandbox;
   sessionId: string;
+  scope?: DiffScope;
 }): Promise<DiffResponse> {
-  const { sandbox, sessionId } = params;
+  const { sandbox, sessionId, scope = "all" } = params;
   const cwd = sandbox.workingDirectory;
 
   // Determine the best base ref for the diff:
@@ -58,21 +61,28 @@ export async function computeAndCacheDiff(params: {
   // - null (for brand-new repos with no commits)
   const baseRef = await resolveBaseRef(sandbox, cwd);
 
-  // When diffing against a remote branch (e.g. origin/main), use
-  // `git merge-base` to find the common ancestor between that branch and
-  // HEAD. This avoids showing unrelated changes that were merged into the
-  // remote branch after the current branch was created.
-  let diffRef = baseRef;
-  if (baseRef && baseRef !== "HEAD") {
-    const mergeBaseResult = await sandbox.exec(
-      `git merge-base ${baseRef} HEAD`,
-      cwd,
-      10000,
-    );
-    if (mergeBaseResult.success && mergeBaseResult.stdout.trim()) {
-      diffRef = mergeBaseResult.stdout.trim();
+  // When scope is "uncommitted", always diff against HEAD to show only
+  // staged + unstaged + untracked changes (not committed branch changes).
+  let diffRef: string | null;
+  if (scope === "uncommitted" && baseRef !== null) {
+    diffRef = "HEAD";
+  } else {
+    // When diffing against a remote branch (e.g. origin/main), use
+    // `git merge-base` to find the common ancestor between that branch and
+    // HEAD. This avoids showing unrelated changes that were merged into the
+    // remote branch after the current branch was created.
+    diffRef = baseRef;
+    if (baseRef && baseRef !== "HEAD") {
+      const mergeBaseResult = await sandbox.exec(
+        `git merge-base ${baseRef} HEAD`,
+        cwd,
+        10000,
+      );
+      if (mergeBaseResult.success && mergeBaseResult.stdout.trim()) {
+        diffRef = mergeBaseResult.stdout.trim();
+      }
+      // If merge-base fails, fall back to the original baseRef
     }
-    // If merge-base fails, fall back to the original baseRef
   }
 
   // Run git commands sequentially; some sandbox backends are not reliable
@@ -331,7 +341,7 @@ export async function computeAndCacheDiff(params: {
 
   const response: DiffResponse = {
     files,
-    baseRef,
+    baseRef: scope === "uncommitted" ? "HEAD" : baseRef,
     summary: {
       totalFiles: files.length,
       totalAdditions,
@@ -339,13 +349,15 @@ export async function computeAndCacheDiff(params: {
     },
   };
 
-  // Cache diff for offline viewing (fire-and-forget)
-  updateSession(sessionId, {
-    cachedDiff: response,
-    cachedDiffUpdatedAt: new Date(),
-    linesAdded: response.summary.totalAdditions,
-    linesRemoved: response.summary.totalDeletions,
-  }).catch((err) => console.error("Failed to cache diff:", err));
+  // Only cache the "all" scope diff for offline viewing (fire-and-forget)
+  if (scope === "all") {
+    updateSession(sessionId, {
+      cachedDiff: response,
+      cachedDiffUpdatedAt: new Date(),
+      linesAdded: response.summary.totalAdditions,
+      linesRemoved: response.summary.totalDeletions,
+    }).catch((err) => console.error("Failed to cache diff:", err));
+  }
 
   return response;
 }

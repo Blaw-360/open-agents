@@ -7,6 +7,7 @@ import {
 import {
   computeAndCacheDiff,
   DiffComputationError,
+  type DiffScope,
 } from "@/lib/diff/compute-diff";
 import { updateSession } from "@/lib/db/sessions";
 import { buildHibernatedLifecycleUpdate } from "@/lib/sandbox/lifecycle";
@@ -16,7 +17,7 @@ import {
   isSandboxUnavailableError,
 } from "@/lib/sandbox/utils";
 
-export type { DiffFile, DiffResponse } from "@/lib/diff/compute-diff";
+export type { DiffFile, DiffResponse, DiffScope } from "@/lib/diff/compute-diff";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -46,9 +47,11 @@ export async function GET(_req: NextRequest, context: RouteContext) {
     return Response.json({ error: "Sandbox not initialized" }, { status: 400 });
   }
 
+  const scope = (_req.nextUrl.searchParams.get("scope") ?? "all") as DiffScope;
+
   try {
     const sandbox = await connectSandbox(sandboxState);
-    const response = await computeAndCacheDiff({ sandbox, sessionId });
+    const response = await computeAndCacheDiff({ sandbox, sessionId, scope });
     return Response.json(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

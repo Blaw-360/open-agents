@@ -5,11 +5,13 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  GitCommitHorizontal,
   Loader2,
   RefreshCw,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { DiffFile } from "@/app/api/sessions/[sessionId]/diff/route";
+import { useEffect, useMemo, useState } from "react";
+import useSWR from "swr";
+import type { DiffFile, DiffResponse } from "@/app/api/sessions/[sessionId]/diff/route";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,13 +21,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   type DiffMode,
   useUserPreferences,
 } from "@/hooks/use-user-preferences";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { defaultDiffOptions, splitDiffOptions } from "@/lib/diffs-config";
+import { fetcher } from "@/lib/swr";
 import { cn } from "@/lib/utils";
 import { useSessionChatWorkspaceContext } from "./session-chat-context";
+import { useSessionChatMetadataContext } from "./session-chat-context";
 
 type DiffViewerProps = {
   open: boolean;
@@ -33,6 +44,7 @@ type DiffViewerProps = {
 };
 
 type DiffStyle = DiffMode;
+type DiffScope = "all" | "uncommitted";
 
 const wrappedDiffExtensions = new Set([".md", ".mdx", ".markdown", ".txt"]);
 
@@ -207,20 +219,113 @@ function FileEntry({
   );
 }
 
+function ScopeDropdown({
+  scope,
+  onScopeChange,
+  uncommittedFileCount,
+  disabled,
+}: {
+  scope: DiffScope;
+  onScopeChange: (scope: DiffScope) => void;
+  uncommittedFileCount: number | null;
+  disabled?: boolean;
+}) {
+  const label = scope === "all" ? "All changes" : "Uncommitted changes";
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild disabled={disabled}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 px-2 text-xs font-medium"
+        >
+          {scope === "uncommitted" && (
+            <GitCommitHorizontal className="h-3 w-3" />
+          )}
+          {label}
+          <ChevronDown className="h-3 w-3 opacity-50" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-[200px]">
+        <DropdownMenuRadioGroup
+          value={scope}
+          onValueChange={(v) => onScopeChange(v as DiffScope)}
+        >
+          <DropdownMenuRadioItem value="all">
+            All changes
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="uncommitted">
+            <div className="flex flex-col">
+              <span>Uncommitted changes</span>
+              {uncommittedFileCount !== null && (
+                <span className="text-xs text-muted-foreground">
+                  {uncommittedFileCount} file{uncommittedFileCount !== 1 && "s"}{" "}
+                  changed
+                </span>
+              )}
+            </div>
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function DiffViewer({ open, onOpenChange }: DiffViewerProps) {
   const {
-    diff,
-    diffLoading,
-    diffRefreshing,
-    diffError,
+    diff: allDiff,
+    diffLoading: allDiffLoading,
+    diffRefreshing: allDiffRefreshing,
+    diffError: allDiffError,
     diffCachedAt,
     sandboxInfo,
-    refreshDiff,
+    refreshDiff: refreshAllDiff,
   } = useSessionChatWorkspaceContext();
+  const { session } = useSessionChatMetadataContext();
   const isMobile = useIsMobile();
   const { preferences } = useUserPreferences();
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [diffStyle, setDiffStyle] = useState<DiffStyle>("unified");
+  const [scope, setScope] = useState<DiffScope>("all");
+
+  // Fetch uncommitted diff separately when scope is "uncommitted"
+  const sandboxConnected = sandboxInfo !== null;
+  const {
+    data: uncommittedDiff,
+    error: uncommittedError,
+    isLoading: uncommittedLoading,
+    isValidating: uncommittedRefreshing,
+    mutate: refreshUncommittedDiff,
+  } = useSWR<DiffResponse>(
+    sandboxConnected && scope === "uncommitted"
+      ? `/api/sessions/${session.id}/diff?scope=uncommitted`
+      : null,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      revalidateIfStale: true,
+    },
+  );
+
+  // Select diff data based on current scope
+  const diff = scope === "uncommitted" ? (uncommittedDiff ?? null) : allDiff;
+  const diffLoading =
+    scope === "uncommitted" ? uncommittedLoading : allDiffLoading;
+  const diffRefreshing =
+    scope === "uncommitted" ? uncommittedRefreshing : allDiffRefreshing;
+  const diffError =
+    scope === "uncommitted"
+      ? (uncommittedError?.message ?? null)
+      : allDiffError;
+
+  // Count uncommitted files from the "all" diff data for the dropdown subtitle
+  const uncommittedFileCount = useMemo(() => {
+    if (!allDiff) return null;
+    return allDiff.files.filter(
+      (f) => f.stagingStatus === "unstaged" || f.stagingStatus === "partial",
+    ).length;
+  }, [allDiff]);
 
   // Show stale indicator if sandbox is offline (even if data came from a live fetch earlier)
   const showStaleIndicator = !sandboxInfo && diff !== null;
@@ -247,6 +352,14 @@ export function DiffViewer({ open, onOpenChange }: DiffViewerProps) {
     setExpandedFiles(new Set());
   };
 
+  const refreshDiff = async () => {
+    if (scope === "uncommitted") {
+      await refreshUncommittedDiff();
+    } else {
+      await refreshAllDiff();
+    }
+  };
+
   useEffect(() => {
     if (!open) {
       return;
@@ -260,6 +373,11 @@ export function DiffViewer({ open, onOpenChange }: DiffViewerProps) {
     setDiffStyle(preferences?.defaultDiffMode ?? "unified");
   }, [open, isMobile, preferences?.defaultDiffMode]);
 
+  // Reset expanded files when scope changes
+  useEffect(() => {
+    setExpandedFiles(new Set());
+  }, [scope]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -272,6 +390,12 @@ export function DiffViewer({ open, onOpenChange }: DiffViewerProps) {
               <DialogTitle className="text-base font-medium">
                 Changes
               </DialogTitle>
+              <ScopeDropdown
+                scope={scope}
+                onScopeChange={setScope}
+                uncommittedFileCount={uncommittedFileCount}
+                disabled={!sandboxInfo}
+              />
               {diff && diff.summary.totalFiles > 0 && (
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-green-600 dark:text-green-500">
@@ -377,7 +501,9 @@ export function DiffViewer({ open, onOpenChange }: DiffViewerProps) {
           {!diffLoading && !diffError && diff && diff.files.length === 0 && (
             <div className="px-4 py-8 text-center">
               <p className="text-sm text-muted-foreground">
-                No changes detected
+                {scope === "uncommitted"
+                  ? "No uncommitted changes"
+                  : "No changes detected"}
               </p>
             </div>
           )}
