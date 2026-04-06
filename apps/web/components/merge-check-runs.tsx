@@ -2,13 +2,13 @@
 
 import { useState, useMemo } from "react";
 import {
-  Ban,
   Check,
   ChevronDown,
   ChevronRight,
   Ellipsis,
   List,
   ArrowUpDown,
+  Loader2,
   RefreshCw,
   X,
 } from "lucide-react";
@@ -257,6 +257,8 @@ interface CheckRunsListProps {
   /** Called when the user clicks refresh */
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  /** True on initial load before any data arrives */
+  isLoading?: boolean;
 }
 
 export function CheckRunsList({
@@ -264,6 +266,7 @@ export function CheckRunsList({
   checks,
   onRefresh,
   isRefreshing,
+  isLoading,
 }: CheckRunsListProps) {
   const passed =
     checks?.passed ?? checkRuns.filter((c) => c.state === "passed").length;
@@ -273,7 +276,7 @@ export function CheckRunsList({
     checks?.failed ?? checkRuns.filter((c) => c.state === "failed").length;
   const total = passed + pending + failed;
 
-  const allPassing = failed === 0 && pending === 0;
+  const allPassing = failed === 0 && pending === 0 && total > 0;
 
   const [groupMode, setGroupMode] = useState<GroupMode>("status");
   const [detailsOpen, setDetailsOpen] = useState(!allPassing);
@@ -306,61 +309,85 @@ export function CheckRunsList({
 
   const groupOrder: PullRequestCheckState[] = ["failed", "pending", "passed"];
 
-  if (checkRuns.length === 0) return null;
+  if (checkRuns.length === 0 && !isLoading) return null;
+
+  const showLoading = isLoading && checkRuns.length === 0;
 
   return (
     <div className="rounded-md border border-border bg-muted/40">
       {/* ---- Header: clickable full-width row ---- */}
       <button
         type="button"
-        onClick={() => setDetailsOpen(!detailsOpen)}
-        className="flex w-full items-center gap-2.5 p-3"
+        onClick={() => {
+          if (!showLoading) setDetailsOpen(!detailsOpen);
+        }}
+        className={cn(
+          "flex w-full items-center gap-2.5 p-3",
+          showLoading && "cursor-default",
+        )}
       >
-        <HeaderStatusIcon
-          passed={passed}
-          failed={failed}
-          pending={pending}
-          total={total}
-        />
+        {showLoading ? (
+          <Loader2 className="h-5 w-5 shrink-0 animate-spin text-muted-foreground" />
+        ) : (
+          <HeaderStatusIcon
+            passed={passed}
+            failed={failed}
+            pending={pending}
+            total={total}
+          />
+        )}
 
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span className="text-sm font-medium text-foreground">Checks</span>
           <span className="truncate text-xs text-muted-foreground">
-            {passed} passed
-            {pending > 0 && `, ${pending} pending`}
-            {failed > 0 && `, ${failed} failing`}
+            {showLoading
+              ? "Loading..."
+              : (
+                  <>
+                    {passed} passed
+                    {pending > 0 && `, ${pending} pending`}
+                    {failed > 0 && `, ${failed} failing`}
+                  </>
+                )}
           </span>
         </div>
 
-        {/* Refresh icon (stop propagation so it doesn't toggle) */}
-        {onRefresh && (
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label="Refresh checks"
-            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRefresh();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.stopPropagation();
-                e.preventDefault();
-                onRefresh();
-              }
-            }}
-          >
-            <RefreshCw
-              className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")}
-            />
-          </span>
-        )}
+        {!showLoading && (
+          <>
+            {/* Refresh icon (stop propagation so it doesn't toggle) */}
+            {onRefresh && (
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label="Refresh checks"
+                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRefresh();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    onRefresh();
+                  }
+                }}
+              >
+                <RefreshCw
+                  className={cn(
+                    "h-3.5 w-3.5",
+                    isRefreshing && "animate-spin",
+                  )}
+                />
+              </span>
+            )}
 
-        {detailsOpen ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            {detailsOpen ? (
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            )}
+          </>
         )}
       </button>
 

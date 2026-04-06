@@ -281,47 +281,37 @@ export function MergePrDialog({
         />
 
         <div className="grid gap-4 py-2">
-          {isLoadingReadiness ? (
-            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Checking merge readiness...
-            </div>
-          ) : (
-            <>
-              {readiness?.checkRuns.length ? (
-                <CheckRunsList
-                  checkRuns={readiness.checkRuns}
-                  checks={
-                    readiness.checks.requiredTotal
-                      ? {
-                          passed: readiness.checks.passed,
-                          pending: readiness.checks.pending,
-                          failed: readiness.checks.failed,
-                        }
-                      : undefined
+          <CheckRunsList
+            checkRuns={readiness?.checkRuns ?? []}
+            checks={
+              readiness?.checks.requiredTotal
+                ? {
+                    passed: readiness.checks.passed,
+                    pending: readiness.checks.pending,
+                    failed: readiness.checks.failed,
                   }
-                  onRefresh={() => {
-                    void loadReadiness();
-                  }}
-                  isRefreshing={isLoadingReadiness}
-                />
-              ) : null}
+                : undefined
+            }
+            onRefresh={() => {
+              void loadReadiness();
+            }}
+            isRefreshing={isLoadingReadiness}
+            isLoading={isLoadingReadiness && !readiness}
+          />
 
-              <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-3">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-medium">Delete source branch</p>
-                  <p className="text-xs text-muted-foreground">
-                    Deletes the PR branch after merge when possible.
-                  </p>
-                </div>
-                <Switch
-                  checked={deleteBranch}
-                  onCheckedChange={setDeleteBranch}
-                  disabled={isSubmitting || isLoadingReadiness}
-                />
-              </div>
-            </>
-          )}
+          <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-3">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Delete source branch</p>
+              <p className="text-xs text-muted-foreground">
+                Deletes the PR branch after merge when possible.
+              </p>
+            </div>
+            <Switch
+              checked={deleteBranch}
+              onCheckedChange={setDeleteBranch}
+              disabled={isSubmitting || isLoadingReadiness}
+            />
+          </div>
 
           {error && (
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
