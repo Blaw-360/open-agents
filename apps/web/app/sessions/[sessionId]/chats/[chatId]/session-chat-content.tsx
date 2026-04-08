@@ -47,6 +47,7 @@ import type { PrDeploymentResponse } from "@/app/api/sessions/[sessionId]/pr-dep
 import type {
   WebAgentCommitDataPart,
   WebAgentPrDataPart,
+  WebAgentSnippetDataPart,
   WebAgentUIMessage,
   WebAgentUIMessagePart,
   WebAgentUIToolPart,
@@ -57,9 +58,11 @@ import {
 } from "@/components/assistant-file-link";
 import { FileSuggestionsDropdown } from "@/components/file-suggestions-dropdown";
 import { ImageAttachmentsPreview } from "@/components/image-attachments-preview";
+import { TextAttachmentsPreview } from "@/components/text-attachments-preview";
 import { ModelSelectorCompact } from "@/components/model-selector-compact";
 import { useInlineQuestion } from "@/components/inline-question-input";
 import { SlashCommandDropdown } from "@/components/slash-command-dropdown";
+import { SnippetChip } from "@/components/snippet-chip";
 import { AssistantMessageGroups } from "@/components/assistant-message-groups";
 import {
   PinnedTodoPanel,
@@ -109,6 +112,7 @@ import { useAudioRecording } from "@/hooks/use-audio-recording";
 import { useFileSuggestions } from "@/hooks/use-file-suggestions";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
+import { useTextAttachments } from "@/hooks/use-text-attachments";
 import { useScrollToBottom } from "@/hooks/use-scroll-to-bottom";
 import { useSessionChats } from "@/hooks/use-session-chats";
 import { useSlashCommands } from "@/hooks/use-slash-commands";
@@ -124,6 +128,7 @@ import {
 } from "@/lib/chat-streaming-state";
 import { formatRelativeTime } from "@/lib/format-relative-time";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
+import { isLargeText } from "@/lib/text-attachment-utils";
 import { DEFAULT_CONTEXT_LIMIT } from "@/lib/models";
 import { getPrDeploymentRefreshInterval } from "@/lib/pr-deployment-polling";
 import { fetcher } from "@/lib/swr";
@@ -1133,6 +1138,12 @@ export function SessionChatContent({
     fileInputRef,
     openFilePicker,
   } = useImageAttachments();
+  const {
+    textAttachments,
+    addTextAttachment,
+    removeTextAttachment,
+    clearTextAttachments,
+  } = useTextAttachments();
   const { containerRef, isAtBottom, scrollToBottom } =
     useScrollToBottom<HTMLDivElement>();
   const {
@@ -1862,13 +1873,16 @@ export function SessionChatContent({
         return;
       }
 
-      const resendText = targetMessage.parts
+      const resendTextParts = targetMessage.parts
         .filter(
-          (part): part is { type: "text"; text: string } =>
+          (part): part is Extract<WebAgentUIMessagePart, { type: "text" }> =>
             part.type === "text",
         )
-        .map((part) => part.text)
-        .join("");
+        .map((part) => ({
+          type: "text" as const,
+          text: part.text,
+        }));
+      const resendText = resendTextParts.map((part) => part.text).join("");
       const resendFiles = targetMessage.parts
         .filter((part): part is FileUIPart => part.type === "file")
         .map((part) => ({
@@ -1877,8 +1891,25 @@ export function SessionChatContent({
           url: part.url,
           ...(part.filename ? { filename: part.filename } : {}),
         }));
+      const resendSnippets = targetMessage.parts
+        .filter(
+          (part): part is WebAgentSnippetDataPart =>
+            part.type === "data-snippet",
+        )
+        .map((part) => ({
+          type: "data-snippet" as const,
+          id: part.id,
+          data: {
+            content: part.data.content,
+            filename: part.data.filename,
+          },
+        }));
 
-      if (!resendText.trim() && resendFiles.length === 0) {
+      if (
+        !resendText.trim() &&
+        resendFiles.length === 0 &&
+        resendSnippets.length === 0
+      ) {
         return;
       }
 
@@ -1907,10 +1938,16 @@ export function SessionChatContent({
         }
 
         setMessages(messages.slice(0, targetMessageIndex));
-        await sendMessageWithPendingState({
-          text: resendText,
-          files: resendFiles.length > 0 ? resendFiles : undefined,
-        });
+        await sendMessageWithPendingState(
+          resendSnippets.length > 0
+            ? {
+                parts: [...resendTextParts, ...resendFiles, ...resendSnippets],
+              }
+            : {
+                text: resendText,
+                files: resendFiles.length > 0 ? resendFiles : undefined,
+              },
+        );
 
         await refreshChats();
       } catch (err) {
@@ -3311,6 +3348,41 @@ export function SessionChatContent({
                         }
 
                         const p = group.part;
+                        const userMessageActions =
+                          m.role === "user" && group.index === 0 ? (
+                            <div className="absolute -left-20 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-md bg-background/80 p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleResendUserMessage(m.id)
+                                }
+                                disabled={hasMessageActionInFlight}
+                                aria-label="Resend this message and delete everything after it"
+                                className="rounded p-1 transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {resendingMessageId === m.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="h-4 w-4" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDeleteUserMessage(m.id)
+                                }
+                                disabled={hasMessageActionInFlight}
+                                aria-label="Delete this message and everything after it"
+                                className="rounded p-1 transition hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {deletingMessageId === m.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </button>
+                            </div>
+                          ) : null;
 
                         if (isReasoningUIPart(p)) {
                           if (!isToolCallsExpanded) return null;
@@ -3371,10 +3443,10 @@ export function SessionChatContent({
                             <div
                               key={`${m.id}-${group.renderKey}`}
                               className={cn(
-                                "flex min-w-0 py-2",
+                                "flex min-w-0",
                                 m.role === "user"
                                   ? "justify-end"
-                                  : "justify-start",
+                                  : "justify-start py-2",
                                 // Breathing room above final assistant text after tool calls
                                 isFinalAssistantTextPart &&
                                   group.index > 0 &&
@@ -3392,40 +3464,7 @@ export function SessionChatContent({
                                       {p.text}
                                     </p>
                                   </div>
-                                  {group.index === 0 && (
-                                    <div className="absolute -left-20 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-md bg-background/80 p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          void handleResendUserMessage(m.id)
-                                        }
-                                        disabled={hasMessageActionInFlight}
-                                        aria-label="Resend this message and delete everything after it"
-                                        className="rounded p-1 transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                                      >
-                                        {resendingMessageId === m.id ? (
-                                          <Loader2 className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                          <RotateCcw className="h-4 w-4" />
-                                        )}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          void handleDeleteUserMessage(m.id)
-                                        }
-                                        disabled={hasMessageActionInFlight}
-                                        aria-label="Delete this message and everything after it"
-                                        className="rounded p-1 transition hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"
-                                      >
-                                        {deletingMessageId === m.id ? (
-                                          <Loader2 className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                          <Trash2 className="h-4 w-4" />
-                                        )}
-                                      </button>
-                                    </div>
-                                  )}
+                                  {userMessageActions}
                                 </div>
                               ) : (
                                 <div className="group min-w-0 w-full overflow-hidden">
@@ -3540,23 +3579,25 @@ export function SessionChatContent({
                                   alt={p.filename ?? "Attached image"}
                                   className="max-h-64 rounded-lg"
                                 />
-                                {m.role === "user" && group.index === 0 && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      void handleDeleteUserMessage(m.id)
-                                    }
-                                    disabled={hasMessageActionInFlight}
-                                    aria-label="Delete this message and everything after it"
-                                    className="absolute -left-10 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition hover:text-destructive group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
-                                  >
-                                    {deletingMessageId === m.id ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="h-4 w-4" />
-                                    )}
-                                  </button>
-                                )}
+                                {userMessageActions}
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        // Render pasted text snippet attachments
+                        if (p.type === "data-snippet") {
+                          return (
+                            <div
+                              key={`${m.id}-${group.renderKey}`}
+                              className="flex justify-end"
+                            >
+                              <div className="group relative w-fit min-w-0 max-w-[80%]">
+                                <SnippetChip
+                                  filename={p.data.filename}
+                                  content={p.data.content}
+                                />
+                                {userMessageActions}
                               </div>
                             </div>
                           );
@@ -3588,7 +3629,11 @@ export function SessionChatContent({
                       );
                     }
 
-                    return renderGroups(true);
+                    return (
+                      <div key={m.id} className="space-y-1">
+                        {renderGroups(true)}
+                      </div>
+                    );
                   },
                 )}
                 {showThinkingIndicator && (
@@ -3722,13 +3767,58 @@ export function SessionChatContent({
                   ) {
                     return;
                   }
-                  const hasContent = input.trim() || images.length > 0;
+                  const hasContent =
+                    input.trim() ||
+                    images.length > 0 ||
+                    textAttachments.length > 0;
                   if (!hasContent) return;
 
+                  // Build message text: typed input + any text attachments
                   const messageText = input;
                   const files = getFileParts();
+
+                  // Build the message payload. When text attachments are
+                  // present we use the parts-based form so we can include
+                  // data-snippet parts alongside text and file parts.
+                  const hasSnippets = textAttachments.length > 0;
+                  let messagePayload: Parameters<
+                    typeof sendMessageWithPendingState
+                  >[0];
+
+                  if (hasSnippets) {
+                    const parts: WebAgentUIMessage["parts"] = [];
+                    if (messageText.trim()) {
+                      parts.push({
+                        type: "text" as const,
+                        text: messageText,
+                      });
+                    }
+                    if (files) {
+                      for (const f of files) {
+                        parts.push(f);
+                      }
+                    }
+                    for (const attachment of textAttachments) {
+                      parts.push({
+                        type: "data-snippet" as const,
+                        id: attachment.id,
+                        data: {
+                          content: attachment.content,
+                          filename: attachment.filename,
+                        },
+                      });
+                    }
+                    messagePayload = { parts };
+                  } else {
+                    messagePayload = {
+                      text: messageText,
+                      files,
+                    };
+                  }
+
                   setInput("");
                   clearImages();
+                  clearTextAttachments();
 
                   const isFirstChatInSession = initialIsOnlyChatInSession;
                   const shouldSetOptimisticTitle =
@@ -3790,10 +3880,7 @@ export function SessionChatContent({
                     }
                   }
                   try {
-                    await sendMessageWithPendingState({
-                      text: messageText,
-                      files,
-                    });
+                    await sendMessageWithPendingState(messagePayload);
                   } catch (err) {
                     if (pendingOptimisticTitleChatIdRef.current) {
                       void clearChatTitle(
@@ -3842,11 +3929,25 @@ export function SessionChatContent({
                   onCreateNew={handleCreateNewSandbox}
                 />
 
-                {/* Image attachments preview */}
-                <ImageAttachmentsPreview
-                  images={images}
-                  onRemove={removeImage}
-                />
+                {/* Attachments preview */}
+                {(images.length > 0 || textAttachments.length > 0) && (
+                  <div className="flex min-w-0 flex-wrap items-start gap-2 px-2 pb-1 pt-2">
+                    {images.length > 0 && (
+                      <ImageAttachmentsPreview
+                        images={images}
+                        onRemove={removeImage}
+                        className="p-0"
+                      />
+                    )}
+                    {textAttachments.length > 0 && (
+                      <TextAttachmentsPreview
+                        attachments={textAttachments}
+                        onRemove={removeTextAttachment}
+                        className="p-0"
+                      />
+                    )}
+                  </div>
+                )}
 
                 {/* Inline question UI — renders above textarea when agent asks a question */}
                 {inlineQuestion.questionHeaderUI}
@@ -3897,6 +3998,8 @@ export function SessionChatContent({
                     onPaste={(e) => {
                       const items = e.clipboardData?.items;
                       if (!items) return;
+
+                      // Handle image pastes
                       for (const item of items) {
                         if (isValidImageType(item.type)) {
                           const file = item.getAsFile();
@@ -3905,8 +4008,16 @@ export function SessionChatContent({
                             addImage(file).catch(() => {
                               // Silently ignore paste errors - rare edge case
                             });
+                            return;
                           }
                         }
+                      }
+
+                      // Handle large text pastes – convert to file attachment
+                      const pastedText = e.clipboardData?.getData("text/plain");
+                      if (pastedText && isLargeText(pastedText)) {
+                        e.preventDefault();
+                        addTextAttachment(pastedText);
                       }
                     }}
                     disabled={isArchived}
