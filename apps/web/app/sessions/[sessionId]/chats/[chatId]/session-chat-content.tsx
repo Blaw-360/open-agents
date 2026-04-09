@@ -7,10 +7,12 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  Code2,
   Copy,
   ExternalLink,
   GitCommitHorizontal,
   GitPullRequest,
+  Globe,
   Link2,
   Loader2,
   Mic,
@@ -881,6 +883,7 @@ export function SessionChatContent({
     setShareRequested,
     setHasActionNeeded,
     panelPortalRef,
+    headerActionsRef,
   } = useGitPanel();
   const { preferences } = useUserPreferences();
   const isIosDevice = useMemo(() => {
@@ -2572,7 +2575,7 @@ export function SessionChatContent({
     prDeploymentUrl,
   ]);
 
-  const isDeploymentStale = branchPreviewUrlChangeBaseline !== undefined;
+  const _isDeploymentStale = branchPreviewUrlChangeBaseline !== undefined;
 
   // When auto-commit lands (transitions from committing to clean), mark the
   // current preview deployment as stale so the UI shows "Deploying…" until
@@ -2618,7 +2621,7 @@ export function SessionChatContent({
 
     window.open(existingPrUrl, "_blank", "noopener,noreferrer");
   };
-  const openPreviewOrPr = () => {
+  const _openPreviewOrPr = () => {
     const targetUrl = prDeploymentUrl ?? existingPrUrl;
     if (!targetUrl) {
       return;
@@ -2626,7 +2629,7 @@ export function SessionChatContent({
 
     window.open(targetUrl, "_blank", "noopener,noreferrer");
   };
-  const openBuildingDeployment = () => {
+  const _openBuildingDeployment = () => {
     if (!buildingDeploymentUrl) {
       return;
     }
@@ -2728,21 +2731,9 @@ export function SessionChatContent({
       hasUncommittedGitChanges={hasUncommittedGitChanges}
       supportsRepoCreation={supportsRepoCreation}
       hasDiff={Boolean(diff || session.cachedDiff)}
-      prDeploymentUrl={prDeploymentUrl}
-      isDeploymentStale={isDeploymentStale}
-      buildingDeploymentUrl={buildingDeploymentUrl}
-      canRunDevServer={canRunDevServer}
-      devServer={devServer}
-      codeEditor={codeEditor}
       diffFiles={diff?.files ?? null}
       diffSummary={diff?.summary ?? null}
       onCreateRepoClick={() => setRepoDialogOpen(true)}
-      onOpenPreview={
-        isDeploymentStale && buildingDeploymentUrl
-          ? openBuildingDeployment
-          : openPreviewOrPr
-      }
-      onOpenBuildingDeployment={openBuildingDeployment}
       onMerged={handleMerged}
       onFixChecks={async (failedRuns) => {
         let text = "";
@@ -2783,6 +2774,65 @@ export function SessionChatContent({
       {/* Git panel portaled to layout-level for full page height */}
       {panelPortalRef.current &&
         createPortal(gitPanelElement, panelPortalRef.current)}
+
+      {/* Dev server / code editor buttons portaled to header */}
+      {headerActionsRef.current &&
+        canRunDevServer &&
+        createPortal(
+          <div className="flex items-center gap-0.5 rounded-lg border border-border px-0.5 py-0.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => void codeEditor.handleOpen()}
+                  disabled={
+                    codeEditor.state.status === "starting" ||
+                    codeEditor.state.status === "stopping"
+                  }
+                >
+                  {codeEditor.state.status === "starting" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Code2 className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {codeEditor.menuLabel}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "h-6 w-6",
+                    devServer.state.status === "ready" && "text-emerald-500",
+                  )}
+                  onClick={() => void devServer.handlePrimaryAction()}
+                  disabled={
+                    devServer.state.status === "starting" ||
+                    devServer.state.status === "stopping"
+                  }
+                >
+                  {devServer.state.status === "starting" ||
+                  devServer.state.status === "stopping" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Globe className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {devServer.menuLabel}
+              </TooltipContent>
+            </Tooltip>
+          </div>,
+          headerActionsRef.current,
+        )}
       <div className="flex h-full flex-col overflow-hidden">
         {/* Share dialog (triggered from header) */}
         <ShareDialog

@@ -10,7 +10,6 @@ import {
   GitCommit,
   GitPullRequest,
   Loader2,
-  Square,
   SquareDot,
   SquareMinus,
   SquarePlus,
@@ -44,8 +43,6 @@ import {
 } from "@/lib/git-flow-client";
 import type { SessionGitStatus } from "@/hooks/use-session-git-status";
 import { useGitPanel } from "./git-panel-context";
-import type { DevServerControls } from "./hooks/use-dev-server";
-import type { CodeEditorControls } from "./hooks/use-code-editor";
 
 /* ------------------------------------------------------------------ */
 /* Merge method labels / descriptions                                  */
@@ -83,16 +80,6 @@ type GitPanelProps = {
   supportsRepoCreation: boolean;
   hasDiff: boolean;
 
-  // Preview/deployment
-  prDeploymentUrl: string | null;
-  isDeploymentStale: boolean;
-  buildingDeploymentUrl: string | null;
-
-  // Sandbox
-  canRunDevServer: boolean;
-  devServer: DevServerControls;
-  codeEditor: CodeEditorControls;
-
   // Diff data
   diffFiles: DiffFile[] | null;
   diffSummary?: {
@@ -102,8 +89,6 @@ type GitPanelProps = {
 
   // Actions
   onCreateRepoClick: () => void;
-  onOpenPreview: () => void;
-  onOpenBuildingDeployment: () => void;
 
   // Merge
   onMerged: (result: MergePullRequestResponse) => Promise<void> | void;
@@ -121,48 +106,6 @@ type GitPanelProps = {
     prStatus: "open" | "merged" | "closed";
   }) => void;
 };
-
-/* ------------------------------------------------------------------ */
-/* Shared small components                                             */
-/* ------------------------------------------------------------------ */
-
-function PanelActionRow({
-  icon: Icon,
-  label,
-  onClick,
-  disabled,
-  detail,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  detail?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
-        disabled
-          ? "cursor-not-allowed opacity-50"
-          : "text-foreground hover:bg-accent",
-      )}
-    >
-      <Icon className="h-4 w-4 shrink-0" />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate">{label}</span>
-        {detail && (
-          <span className="truncate text-xs text-muted-foreground">
-            {detail}
-          </span>
-        )}
-      </div>
-    </button>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /* Diff file list for the panel's Diff tab                             */
@@ -1128,17 +1071,9 @@ export function GitPanel(props: GitPanelProps) {
     hasUncommittedGitChanges,
     supportsRepoCreation,
     hasDiff,
-    prDeploymentUrl,
-    isDeploymentStale,
-    buildingDeploymentUrl,
-    canRunDevServer,
-    devServer,
-    codeEditor,
     diffFiles,
     diffSummary,
     onCreateRepoClick,
-    onOpenPreview,
-    onOpenBuildingDeployment,
     onMerged,
     onFixChecks,
     hasSandbox,
@@ -1197,30 +1132,28 @@ export function GitPanel(props: GitPanelProps) {
 
       {/* Tab bar — matches chat tabs sub-header height */}
       <div className="flex items-center gap-0.5 border-b border-border bg-muted/30 px-2 py-[7px]">
-        {[
-          "code" as const,
-          "diff" as const,
-          ...(showGitTab ? (["pr"] as const) : []),
-        ].map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            onClick={() => setGitPanelTab(tab)}
-            className={cn(
-              "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-              gitPanelTab === tab
-                ? "bg-secondary text-secondary-foreground"
-                : "text-muted-foreground hover:bg-muted/50",
-            )}
-          >
-            {tab === "code" ? "Code" : tab === "diff" ? "Changes" : "PR"}
-            {tab === "diff" && hasDiffChanges && (
-              <span className="ml-1 text-[10px] text-muted-foreground font-mono">
-                {diffFiles?.length ?? 0}
-              </span>
-            )}
-          </button>
-        ))}
+        {["diff" as const, ...(showGitTab ? (["pr"] as const) : [])].map(
+          (tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setGitPanelTab(tab)}
+              className={cn(
+                "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                gitPanelTab === tab
+                  ? "bg-secondary text-secondary-foreground"
+                  : "text-muted-foreground hover:bg-muted/50",
+              )}
+            >
+              {tab === "diff" ? "Changes" : "PR"}
+              {tab === "diff" && hasDiffChanges && (
+                <span className="ml-1 text-[10px] text-muted-foreground font-mono">
+                  {diffFiles?.length ?? 0}
+                </span>
+              )}
+            </button>
+          ),
+        )}
       </div>
 
       {/* Panel content */}
@@ -1230,82 +1163,6 @@ export function GitPanel(props: GitPanelProps) {
           gitPanelTab === "diff" ? "flex flex-col" : "overflow-y-auto",
         )}
       >
-        {gitPanelTab === "code" && (
-          <div className="p-2">
-            <div className="space-y-1">
-              {/* Dev server */}
-              {canRunDevServer && (
-                <PanelActionRow
-                  icon={
-                    devServer.state.status === "starting" ||
-                    devServer.state.status === "stopping"
-                      ? Loader2
-                      : ExternalLink
-                  }
-                  label={devServer.menuLabel}
-                  detail={devServer.menuDetail ?? undefined}
-                  onClick={() => void devServer.handlePrimaryAction()}
-                  disabled={
-                    devServer.state.status === "starting" ||
-                    devServer.state.status === "stopping"
-                  }
-                />
-              )}
-              {canRunDevServer && devServer.showStopAction && (
-                <PanelActionRow
-                  icon={Square}
-                  label={
-                    devServer.state.status === "stopping"
-                      ? "Stopping Dev Server..."
-                      : "Stop Dev Server"
-                  }
-                  onClick={() => void devServer.handleStopAction()}
-                  disabled={devServer.state.status === "stopping"}
-                />
-              )}
-
-              {/* Code editor */}
-              {canRunDevServer && (
-                <PanelActionRow
-                  icon={
-                    codeEditor.state.status === "starting" ||
-                    codeEditor.state.status === "stopping"
-                      ? Loader2
-                      : ExternalLink
-                  }
-                  label={codeEditor.menuLabel}
-                  detail={codeEditor.menuDetail ?? undefined}
-                  onClick={() => void codeEditor.handleOpen()}
-                  disabled={
-                    codeEditor.state.status === "starting" ||
-                    codeEditor.state.status === "stopping"
-                  }
-                />
-              )}
-
-              {/* Preview / deployment */}
-              {hasExistingPr && prDeploymentUrl && (
-                <PanelActionRow
-                  icon={ExternalLink}
-                  label={isDeploymentStale ? "Deploying…" : "Preview"}
-                  onClick={
-                    isDeploymentStale && buildingDeploymentUrl
-                      ? onOpenBuildingDeployment
-                      : onOpenPreview
-                  }
-                  disabled={isDeploymentStale && !buildingDeploymentUrl}
-                />
-              )}
-
-              {!canRunDevServer && (
-                <div className="px-2 py-6 text-center text-xs text-muted-foreground">
-                  Sandbox is not active
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {gitPanelTab === "diff" && (
           <div className="flex min-h-0 flex-1 flex-col">
             {/* Fixed commit area */}

@@ -11,7 +11,7 @@ import {
   type RefObject,
 } from "react";
 
-export type GitPanelTab = "code" | "diff" | "pr";
+export type GitPanelTab = "diff" | "pr";
 export type ActiveView = "chat" | "diff";
 export type DiffScope = "uncommitted" | "branch";
 
@@ -54,6 +54,9 @@ type GitPanelContextValue = {
 
   /** Ref to the DOM node where the git panel should be portaled into */
   panelPortalRef: RefObject<HTMLDivElement | null>;
+
+  /** Ref to the DOM node where header action buttons should be portaled into */
+  headerActionsRef: RefObject<HTMLDivElement | null>;
 };
 
 const GitPanelContext = createContext<GitPanelContextValue | undefined>(
@@ -62,7 +65,7 @@ const GitPanelContext = createContext<GitPanelContextValue | undefined>(
 
 export function GitPanelProvider({ children }: { children: ReactNode }) {
   const [gitPanelOpen, setGitPanelOpen] = useState(false);
-  const [gitPanelTab, setGitPanelTab] = useState<GitPanelTab>("code");
+  const [gitPanelTab, setGitPanelTab] = useState<GitPanelTab>("diff");
   const [activeView, setActiveView] = useState<ActiveView>("chat");
   const [focusedDiffFile, setFocusedDiffFile] = useState<string | null>(null);
   const [changesTabDismissed, setChangesTabDismissed] = useState(false);
@@ -70,6 +73,7 @@ export function GitPanelProvider({ children }: { children: ReactNode }) {
   const [hasActionNeeded, setHasActionNeeded] = useState(false);
   const [shareRequested, setShareRequested] = useState(false);
   const panelPortalRef = useRef<HTMLDivElement | null>(null);
+  const headerActionsRef = useRef<HTMLDivElement | null>(null);
 
   const toggleGitPanel = useCallback(() => {
     setGitPanelOpen((prev) => !prev);
@@ -102,6 +106,7 @@ export function GitPanelProvider({ children }: { children: ReactNode }) {
       shareRequested,
       setShareRequested,
       panelPortalRef,
+      headerActionsRef,
     }),
     [
       gitPanelOpen,

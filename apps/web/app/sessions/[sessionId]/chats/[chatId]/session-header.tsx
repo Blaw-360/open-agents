@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, Link2, PanelLeft, PanelRight } from "lucide-react";
+import { ExternalLink, FolderGit2, Link2, PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -18,8 +18,13 @@ import { useSessionLayout } from "@/app/sessions/[sessionId]/session-layout-cont
  */
 export function SessionHeader() {
   const { toggleSidebar } = useSidebar();
-  const { gitPanelOpen, toggleGitPanel, hasActionNeeded, setShareRequested } =
-    useGitPanel();
+  const {
+    gitPanelOpen,
+    toggleGitPanel,
+    hasActionNeeded,
+    setShareRequested,
+    headerActionsRef,
+  } = useGitPanel();
   const { session } = useSessionLayout();
 
   return (
@@ -63,7 +68,7 @@ export function SessionHeader() {
                 {session.branch && (
                   <>
                     <span className="text-muted-foreground/40">/</span>
-                    <span className="truncate text-muted-foreground">
+                    <span className="truncate font-mono text-muted-foreground">
                       {session.branch}
                     </span>
                   </>
@@ -91,8 +96,11 @@ export function SessionHeader() {
           </div>
         </div>
 
-        {/* Right side: git panel toggle */}
-        <div className="flex items-center">
+        {/* Right side: dev server / code editor actions + git panel toggle */}
+        <div className="flex items-center gap-1">
+          {/* Portal target for dev server / code editor buttons (rendered from per-chat content) */}
+          <div ref={headerActionsRef} className="flex items-center" />
+
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -104,7 +112,7 @@ export function SessionHeader() {
                 )}
                 onClick={toggleGitPanel}
               >
-                <PanelRight className="h-4 w-4" />
+                <FolderGit2 className="h-4 w-4" />
                 {hasActionNeeded && !gitPanelOpen && (
                   <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-amber-500" />
                 )}
