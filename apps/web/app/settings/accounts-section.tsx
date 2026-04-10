@@ -186,21 +186,21 @@ function OrgRow({ org }: { org: OrgInstallStatus }) {
   const isOrg = org.type === "Organization";
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-border/50 p-3">
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-border/50 px-4 py-3.5">
       <div className="flex items-center gap-3 min-w-0">
         {/* Avatar */}
         {org.avatarUrl ? (
           <Image
             src={org.avatarUrl}
             alt={org.login}
-            width={32}
-            height={32}
-            className="h-8 w-8 rounded-full"
+            width={36}
+            height={36}
+            className="h-9 w-9 rounded-full"
           />
         ) : isOrg ? (
-          <Building2 className="h-8 w-8 text-muted-foreground" />
+          <Building2 className="h-9 w-9 text-muted-foreground" />
         ) : (
-          <UserIcon className="h-8 w-8 text-muted-foreground" />
+          <UserIcon className="h-9 w-9 text-muted-foreground" />
         )}
 
         {/* Info */}
@@ -218,9 +218,6 @@ function OrgRow({ org }: { org: OrgInstallStatus }) {
               <span className="inline-flex items-center gap-1">
                 <CheckCircle2 className="size-3 text-green-500" />
                 Installed
-                {org.repositorySelection === "all"
-                  ? " · all repositories"
-                  : " · selected repositories"}
               </span>
             ) : (
               <span className="inline-flex items-center gap-1">
@@ -232,8 +229,15 @@ function OrgRow({ org }: { org: OrgInstallStatus }) {
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center gap-2 shrink-0">
+      {/* Right side: repo selection + action */}
+      <div className="flex items-center gap-3 shrink-0">
+        {isInstalled && (
+          <span className="hidden text-xs font-mono tabular-nums text-muted-foreground sm:inline">
+            {org.repositorySelection === "all"
+              ? "all repositories"
+              : "selected repositories"}
+          </span>
+        )}
         {isInstalled ? (
           org.installationUrl ? (
             <Button variant="outline" size="sm" asChild>
@@ -378,7 +382,7 @@ function GitHubConnection({
             <span className="text-sm font-medium">GitHub</span>
             {hasGitHub && (
               <span className="text-xs text-muted-foreground">
-                · {installedCount} installed
+                · {installedCount} {installedCount === 1 ? "account" : "accounts"} configured
               </span>
             )}
           </div>

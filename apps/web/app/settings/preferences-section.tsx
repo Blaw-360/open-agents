@@ -93,6 +93,8 @@ export function PreferencesSectionSkeleton() {
         <div className="grid gap-6 sm:grid-cols-2">
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
         </div>
       </div>
       <div className="border-t border-border/50" />
@@ -103,19 +105,6 @@ export function PreferencesSectionSkeleton() {
           <Skeleton className="h-16 w-full" />
         </div>
         <Skeleton className="h-24 w-full" />
-      </div>
-      <div className="border-t border-border/50" />
-      <div className="grid gap-8 sm:grid-cols-2">
-        <div className="space-y-4">
-          <SectionHeader>Environment</SectionHeader>
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-        </div>
-        <div className="space-y-4">
-          <SectionHeader>Automation</SectionHeader>
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
       </div>
     </div>
   );
@@ -354,10 +343,11 @@ export function PreferencesSection() {
 
   return (
     <div className="space-y-8">
-      {/* ── General: Theme + Notifications side by side ── */}
+      {/* ── General: Theme, Notifications, Environment, Automation ── */}
       <div className="space-y-4">
         <SectionHeader>General</SectionHeader>
         <div className="grid gap-6 sm:grid-cols-2">
+          {/* Theme */}
           <div className="grid gap-2">
             <Label htmlFor="appearance">Theme</Label>
             <Select value={theme} onValueChange={handleThemeChange}>
@@ -377,6 +367,7 @@ export function PreferencesSection() {
             </p>
           </div>
 
+          {/* Notifications */}
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-4">
               <div className="space-y-0.5">
@@ -408,6 +399,80 @@ export function PreferencesSection() {
                 />
               </div>
             )}
+          </div>
+
+          {/* Environment */}
+          <div className="space-y-3">
+            <div className="grid gap-2">
+              <Label htmlFor="sandbox">Default Sandbox</Label>
+              <Select
+                value={preferences?.defaultSandboxType ?? DEFAULT_SANDBOX_TYPE}
+                onValueChange={(value) => handleSandboxChange(value as SandboxType)}
+                disabled={isSaving}
+              >
+                <SelectTrigger id="sandbox" className="w-full">
+                  <SelectValue placeholder="Select a sandbox type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SANDBOX_OPTIONS.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="diff-mode">Default Diff Mode</Label>
+              <Select
+                value={preferences?.defaultDiffMode ?? "unified"}
+                onValueChange={(value) => handleDiffModeChange(value as DiffMode)}
+                disabled={isSaving}
+              >
+                <SelectTrigger id="diff-mode" className="w-full">
+                  <SelectValue placeholder="Select a diff mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  {DIFF_MODE_OPTIONS.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Automation */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="auto-commit-push">Auto commit &amp; push</Label>
+                <p className="text-xs text-muted-foreground">
+                  Commit and push when an agent turn finishes.
+                </p>
+              </div>
+              <Switch
+                id="auto-commit-push"
+                checked={preferences?.autoCommitPush ?? false}
+                onCheckedChange={handleAutoCommitPushChange}
+                disabled={isSaving}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="auto-create-pr">Auto create PR</Label>
+                <p className="text-xs text-muted-foreground">
+                  Open a pull request after auto commit.
+                </p>
+              </div>
+              <Switch
+                id="auto-create-pr"
+                checked={preferences?.autoCreatePr ?? false}
+                onCheckedChange={handleAutoCreatePrChange}
+                disabled={isSaving || !(preferences?.autoCommitPush ?? false)}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -474,85 +539,6 @@ export function PreferencesSection() {
           onSetEnabledModels={handleSetEnabledModels}
           disabled={isSaving}
         />
-      </div>
-
-      <div className="border-t border-border/50" />
-
-      {/* ── Environment + Automation side by side ── */}
-      <div className="grid gap-8 sm:grid-cols-2">
-        <div className="space-y-4">
-          <SectionHeader>Environment</SectionHeader>
-          <div className="grid gap-2">
-            <Label htmlFor="sandbox">Default Sandbox</Label>
-            <Select
-              value={preferences?.defaultSandboxType ?? DEFAULT_SANDBOX_TYPE}
-              onValueChange={(value) => handleSandboxChange(value as SandboxType)}
-              disabled={isSaving}
-            >
-              <SelectTrigger id="sandbox" className="w-full">
-                <SelectValue placeholder="Select a sandbox type" />
-              </SelectTrigger>
-              <SelectContent>
-                {SANDBOX_OPTIONS.map((option) => (
-                  <SelectItem key={option.id} value={option.id}>
-                    {option.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="diff-mode">Default Diff Mode</Label>
-            <Select
-              value={preferences?.defaultDiffMode ?? "unified"}
-              onValueChange={(value) => handleDiffModeChange(value as DiffMode)}
-              disabled={isSaving}
-            >
-              <SelectTrigger id="diff-mode" className="w-full">
-                <SelectValue placeholder="Select a diff mode" />
-              </SelectTrigger>
-              <SelectContent>
-                {DIFF_MODE_OPTIONS.map((option) => (
-                  <SelectItem key={option.id} value={option.id}>
-                    {option.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <SectionHeader>Automation</SectionHeader>
-          <div className="flex items-center justify-between gap-4">
-            <div className="space-y-0.5">
-              <Label htmlFor="auto-commit-push">Auto commit &amp; push</Label>
-              <p className="text-xs text-muted-foreground">
-                Commit and push when an agent turn finishes.
-              </p>
-            </div>
-            <Switch
-              id="auto-commit-push"
-              checked={preferences?.autoCommitPush ?? false}
-              onCheckedChange={handleAutoCommitPushChange}
-              disabled={isSaving}
-            />
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <div className="space-y-0.5">
-              <Label htmlFor="auto-create-pr">Auto create PR</Label>
-              <p className="text-xs text-muted-foreground">
-                Open a pull request after auto commit.
-              </p>
-            </div>
-            <Switch
-              id="auto-create-pr"
-              checked={preferences?.autoCreatePr ?? false}
-              onCheckedChange={handleAutoCreatePrChange}
-              disabled={isSaving || !(preferences?.autoCommitPush ?? false)}
-            />
-          </div>
-        </div>
       </div>
 
       <div className="border-t border-border/50" />
