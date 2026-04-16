@@ -82,6 +82,54 @@ function buildGitHubCredentialBrokeringPolicy(
   };
 }
 
+function getErrorResponseStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const status = (error as { response?: { status?: unknown } }).response?.status;
+  return typeof status === "number" ? status : undefined;
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const code = (error as { json?: { error?: { code?: unknown } } }).json?.error
+    ?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+function getErrorDetailMessage(error: unknown): string | undefined {
+  if (error && typeof error === "object") {
+    const apiMessage = (
+      error as { json?: { error?: { message?: unknown } } }
+    ).json?.error?.message;
+    if (typeof apiMessage === "string") {
+      return apiMessage;
+    }
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return undefined;
+}
+
+function isNetworkPolicyTransformUnsupportedError(error: unknown): boolean {
+  const status = getErrorResponseStatus(error);
+  const code = getErrorCode(error)?.toLowerCase();
+  const detail = getErrorDetailMessage(error)?.toLowerCase() ?? "";
+
+  return (
+    (status === 402 || code === "payment_required") &&
+    detail.includes("network policy") &&
+    detail.includes("transform")
+  );
+}
+
 async function syncGitHubCredentialBrokering(
   sdk: VercelSandboxSDK,
   token?: string,
@@ -522,47 +570,85 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     // Calculate SDK timeout with buffer for beforeStop hook.
     const sdkTimeout = effectiveTimeout + TIMEOUT_BUFFER_MS;
 
-    const createBaseConfig = {
-      ...(name ? { name } : {}),
-      resources: { vcpus },
-      timeout: sdkTimeout,
-      runtime,
-      persistent,
-      networkPolicy: buildGitHubCredentialBrokeringPolicy(githubToken),
-      ...(ports && { ports }),
-      ...(snapshotExpiration !== undefined && { snapshotExpiration }),
+    const createSandboxSdk = async (
+      networkPolicy: SandboxNetworkPolicy,
+      sourceToken?: string,
+    ): Promise<VercelSandboxSDK> => {
+      const createBaseConfig = {
+        ...(name ? { name } : {}),
+        resources: { vcpus },
+        timeout: sdkTimeout,
+        runtime,
+        persistent,
+        networkPolicy,
+        ...(ports && { ports }),
+        ...(snapshotExpiration !== undefined && { snapshotExpiration }),
+      };
+
+      if (restoreSnapshotId) {
+        return VercelSandboxSDK.create({
+          ...createBaseConfig,
+          source: { type: "snapshot", snapshotId: restoreSnapshotId },
+        });
+      }
+
+      if (baseSnapshotId) {
+        return VercelSandboxSDK.create({
+          ...createBaseConfig,
+          source: { type: "snapshot", snapshotId: baseSnapshotId },
+        });
+      }
+
+      if (source) {
+        return VercelSandboxSDK.create({
+          ...createBaseConfig,
+          source: sourceToken
+            ? {
+                type: "git",
+                url: source.url,
+                username: "x-access-token",
+                password: sourceToken,
+                ...(source.branch && { revision: source.branch }),
+              }
+            : {
+                type: "git",
+                url: source.url,
+                ...(source.branch && { revision: source.branch }),
+              },
+        });
+      }
+
+      return VercelSandboxSDK.create(createBaseConfig);
     };
 
+    let effectiveSourceToken = source?.token;
     let sdk: VercelSandboxSDK;
-    if (restoreSnapshotId) {
-      sdk = await VercelSandboxSDK.create({
-        ...createBaseConfig,
-        source: { type: "snapshot", snapshotId: restoreSnapshotId },
-      });
-    } else if (baseSnapshotId) {
-      sdk = await VercelSandboxSDK.create({
-        ...createBaseConfig,
-        source: { type: "snapshot", snapshotId: baseSnapshotId },
-      });
-    } else if (source) {
-      sdk = await VercelSandboxSDK.create({
-        ...createBaseConfig,
-        source: source.token
-          ? {
-              type: "git",
-              url: source.url,
-              username: "x-access-token",
-              password: source.token,
-              ...(source.branch && { revision: source.branch }),
-            }
-          : {
-              type: "git",
-              url: source.url,
-              ...(source.branch && { revision: source.branch }),
-            },
-      });
-    } else {
-      sdk = await VercelSandboxSDK.create(createBaseConfig);
+
+    try {
+      sdk = await createSandboxSdk(
+        buildGitHubCredentialBrokeringPolicy(githubToken),
+        effectiveSourceToken,
+      );
+    } catch (error) {
+      const shouldRetryWithoutTransforms =
+        Boolean(githubToken) &&
+        isNetworkPolicyTransformUnsupportedError(error);
+
+      if (!shouldRetryWithoutTransforms) {
+        throw error;
+      }
+
+      console.warn(
+        "[VercelSandbox] Network policy transformations are unavailable on this Vercel plan. Retrying sandbox creation without credential brokering transforms.",
+      );
+
+      // Without network policy transforms, use tokenized git source auth for
+      // initial clone/push flows when available.
+      if (!effectiveSourceToken) {
+        effectiveSourceToken = githubToken;
+      }
+
+      sdk = await createSandboxSdk(DEFAULT_NETWORK_POLICY, effectiveSourceToken);
     }
 
     const workingDirectory = DEFAULT_WORKING_DIRECTORY;
@@ -572,8 +658,9 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     // clone will fail. Consider using git init + remote add + fetch + checkout
     // instead, which works regardless of existing directory contents.
     if (source && baseSnapshotId) {
-      const cloneUrl = source.token
-        ? (buildAuthenticatedGitHubUrl(source.url, source.token) ?? source.url)
+      const cloneUrl = effectiveSourceToken
+        ? (buildAuthenticatedGitHubUrl(source.url, effectiveSourceToken) ??
+          source.url)
         : source.url;
       const cloneArgs = ["clone"];
       if (source.branch) {
@@ -608,10 +695,10 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     // We modify the remote URL to embed credentials directly (standard CI/CD approach)
     // TODO: When baseSnapshotId is set, the token is already embedded in the
     // clone URL above, making this set-url call redundant for that path.
-    if (source?.token) {
+    if (source && effectiveSourceToken) {
       const authenticatedUrl = buildAuthenticatedGitHubUrl(
         source.url,
-        source.token,
+        effectiveSourceToken,
       );
       if (authenticatedUrl) {
         await sdk.runCommand({
@@ -723,7 +810,20 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
       name: sandboxName,
       resume: options.resume ?? false,
     });
-    await syncGitHubCredentialBrokering(sdk, options.githubToken);
+    try {
+      await syncGitHubCredentialBrokering(sdk, options.githubToken);
+    } catch (error) {
+      if (
+        options.githubToken &&
+        isNetworkPolicyTransformUnsupportedError(error)
+      ) {
+        console.warn(
+          "[VercelSandbox] Network policy transformations are unavailable on this Vercel plan. Continuing without credential brokering transforms.",
+        );
+      } else {
+        throw error;
+      }
+    }
     const session = sdk.currentSession();
 
     // Use provided remainingTimeout when available; otherwise derive it from the
