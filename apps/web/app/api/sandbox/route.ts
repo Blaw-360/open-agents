@@ -43,6 +43,39 @@ interface CreateSandboxRequest {
   sandboxType?: "vercel";
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function isMissingSnapshotError(error: unknown): boolean {
+  const errorRecord = error as
+    | {
+        json?: { error?: { code?: string; message?: string } };
+        response?: { status?: number };
+      }
+    | undefined;
+
+  const errorCode = errorRecord?.json?.error?.code;
+  const errorMessage = errorRecord?.json?.error?.message;
+  if (
+    errorCode === "not_found" &&
+    typeof errorMessage === "string" &&
+    errorMessage.toLowerCase().includes("snapshot")
+  ) {
+    return true;
+  }
+
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes("snapshot not found") ||
+    (message.includes("status code 404") && message.includes("snapshot"))
+  );
+}
+
 // async function syncVercelProjectEnvVarsToSandbox(params: {
 //   userId: string;
 //   sessionRecord: SessionRecord;
@@ -190,23 +223,49 @@ export async function POST(req: Request) {
       }
     : undefined;
 
-  const sandbox = await connectSandbox({
-    state: {
-      type: "vercel",
-      ...(sandboxName ? { sandboxName } : {}),
-      source,
-    },
-    options: {
-      githubToken: githubToken ?? undefined,
-      gitUser,
-      timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
-      ports: DEFAULT_SANDBOX_PORTS,
-      baseSnapshotId: DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
-      persistent: !!sandboxName,
-      resume: !!sandboxName,
-      createIfMissing: !!sandboxName,
-    },
-  });
+  const sandboxState = {
+    type: "vercel" as const,
+    ...(sandboxName ? { sandboxName } : {}),
+    source,
+  };
+  const sandboxOptions = {
+    githubToken: githubToken ?? undefined,
+    gitUser,
+    timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
+    ports: DEFAULT_SANDBOX_PORTS,
+    persistent: !!sandboxName,
+    resume: !!sandboxName,
+    createIfMissing: !!sandboxName,
+  };
+
+  let sandbox: Awaited<ReturnType<typeof connectSandbox>>;
+  try {
+    sandbox = await connectSandbox({
+      state: sandboxState,
+      options: {
+        ...sandboxOptions,
+        ...(DEFAULT_SANDBOX_BASE_SNAPSHOT_ID
+          ? { baseSnapshotId: DEFAULT_SANDBOX_BASE_SNAPSHOT_ID }
+          : {}),
+      },
+    });
+  } catch (error) {
+    if (
+      DEFAULT_SANDBOX_BASE_SNAPSHOT_ID &&
+      isMissingSnapshotError(error)
+    ) {
+      console.warn(
+        `Base snapshot '${DEFAULT_SANDBOX_BASE_SNAPSHOT_ID}' was not found. Retrying sandbox create without a base snapshot.`,
+      );
+
+      sandbox = await connectSandbox({
+        state: sandboxState,
+        options: sandboxOptions,
+      });
+    } else {
+      throw error;
+    }
+  }
 
   if (sessionId && sandbox.getState) {
     const nextState = sandbox.getState() as SandboxState;
