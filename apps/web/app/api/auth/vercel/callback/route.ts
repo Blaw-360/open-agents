@@ -6,6 +6,37 @@ import { encryptJWE } from "@/lib/jwe/encrypt";
 import { SESSION_COOKIE_NAME } from "@/lib/session/constants";
 import { exchangeVercelCode, getVercelUserInfo } from "@/lib/vercel/oauth";
 
+function parseAllowlist(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function isAuthorizedVercelUser(userInfo: {
+  sub: string;
+  email?: string;
+}): boolean {
+  const allowedUserIds = parseAllowlist(process.env.VERCEL_ALLOWED_USER_IDS);
+  const allowedEmails = parseAllowlist(process.env.VERCEL_ALLOWED_EMAILS).map(
+    (email) => email.toLowerCase(),
+  );
+
+  // Default behavior remains open to any authenticated Vercel user unless
+  // explicit allowlists are configured.
+  if (allowedUserIds.length === 0 && allowedEmails.length === 0) {
+    return true;
+  }
+
+  if (allowedUserIds.includes(userInfo.sub)) {
+    return true;
+  }
+
+  const email = userInfo.email?.toLowerCase();
+  return Boolean(email && allowedEmails.includes(email));
+}
+
 function clearVercelOauthCookies(store: Awaited<ReturnType<typeof cookies>>) {
   store.delete("vercel_auth_state");
   store.delete("vercel_code_verifier");
@@ -50,6 +81,10 @@ export async function GET(req: NextRequest): Promise<Response> {
     });
 
     const userInfo = await getVercelUserInfo(tokens.access_token);
+    if (!isAuthorizedVercelUser(userInfo)) {
+      clearVercelOauthCookies(cookieStore);
+      return new Response("Access denied", { status: 403 });
+    }
 
     const tokenExpiresAt = new Date(Date.now() + tokens.expires_in * 1000);
 

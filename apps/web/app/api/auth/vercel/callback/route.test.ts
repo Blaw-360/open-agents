@@ -60,6 +60,8 @@ const originalEnv = {
   NEXT_PUBLIC_VERCEL_APP_CLIENT_ID:
     process.env.NEXT_PUBLIC_VERCEL_APP_CLIENT_ID,
   VERCEL_APP_CLIENT_SECRET: process.env.VERCEL_APP_CLIENT_SECRET,
+  VERCEL_ALLOWED_USER_IDS: process.env.VERCEL_ALLOWED_USER_IDS,
+  VERCEL_ALLOWED_EMAILS: process.env.VERCEL_ALLOWED_EMAILS,
   VERCEL_GIT_REPO_OWNER: process.env.VERCEL_GIT_REPO_OWNER,
   VERCEL_GIT_REPO_SLUG: process.env.VERCEL_GIT_REPO_SLUG,
   VERCEL_PROJECT_PRODUCTION_URL: process.env.VERCEL_PROJECT_PRODUCTION_URL,
@@ -92,6 +94,8 @@ beforeEach(() => {
   Object.assign(process.env, {
     NEXT_PUBLIC_VERCEL_APP_CLIENT_ID: "client-id",
     VERCEL_APP_CLIENT_SECRET: "client-secret",
+    VERCEL_ALLOWED_USER_IDS: "",
+    VERCEL_ALLOWED_EMAILS: "",
     VERCEL_GIT_REPO_OWNER: "vercel-labs",
     VERCEL_GIT_REPO_SLUG: "open-harness",
     VERCEL_PROJECT_PRODUCTION_URL: "",
@@ -105,6 +109,8 @@ afterEach(() => {
     NEXT_PUBLIC_VERCEL_APP_CLIENT_ID:
       originalEnv.NEXT_PUBLIC_VERCEL_APP_CLIENT_ID,
     VERCEL_APP_CLIENT_SECRET: originalEnv.VERCEL_APP_CLIENT_SECRET,
+    VERCEL_ALLOWED_USER_IDS: originalEnv.VERCEL_ALLOWED_USER_IDS,
+    VERCEL_ALLOWED_EMAILS: originalEnv.VERCEL_ALLOWED_EMAILS,
     VERCEL_GIT_REPO_OWNER: originalEnv.VERCEL_GIT_REPO_OWNER,
     VERCEL_GIT_REPO_SLUG: originalEnv.VERCEL_GIT_REPO_SLUG,
     VERCEL_PROJECT_PRODUCTION_URL: originalEnv.VERCEL_PROJECT_PRODUCTION_URL,
@@ -115,6 +121,45 @@ afterEach(() => {
 });
 
 describe("GET /api/auth/vercel/callback", () => {
+  test("denies login when allowlists are configured and user does not match", async () => {
+    process.env.VERCEL_ALLOWED_USER_IDS = "other-user-id";
+    process.env.VERCEL_ALLOWED_EMAILS = "other@example.com";
+
+    const { GET } = await routeModulePromise;
+    const response = await GET(createRequest("https://self-hosted.example"));
+
+    expect(response.status).toBe(403);
+    expect(upsertUserMock).not.toHaveBeenCalled();
+    expect(deletedCookies).toEqual([
+      "vercel_auth_state",
+      "vercel_code_verifier",
+      "vercel_auth_redirect_to",
+    ]);
+  });
+
+  test("allows login when email matches configured allowlist", async () => {
+    process.env.VERCEL_ALLOWED_EMAILS = "person@example.com";
+
+    const { GET } = await routeModulePromise;
+    const response = await GET(createRequest("https://self-hosted.example"));
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/sessions");
+    expect(upsertUserMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("allows login when Vercel user id matches configured allowlist", async () => {
+    process.env.VERCEL_ALLOWED_USER_IDS = "vercel-user-1";
+    process.env.VERCEL_ALLOWED_EMAILS = "other@example.com";
+
+    const { GET } = await routeModulePromise;
+    const response = await GET(createRequest("https://self-hosted.example"));
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/sessions");
+    expect(upsertUserMock).toHaveBeenCalledTimes(1);
+  });
+
   test("allows non-Vercel emails on the managed deployment", async () => {
     getVercelUserInfoMock.mockResolvedValueOnce({
       sub: "vercel-user-1",

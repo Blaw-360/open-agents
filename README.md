@@ -74,6 +74,18 @@ VERCEL_APP_CLIENT_SECRET=
 
 Without these, the site can deploy, but Vercel sign-in will not work.
 
+### Optional: restrict app login to your own Vercel account(s)
+
+By default, any successfully authenticated Vercel user can sign in to the app.
+To lock this down, set one or both of:
+
+```env
+VERCEL_ALLOWED_USER_IDS=          # comma-separated Vercel OAuth "sub" IDs
+VERCEL_ALLOWED_EMAILS=            # comma-separated emails
+```
+
+If either allowlist is set, users must match at least one value.
+
 ### Required for GitHub repo access, pushes, and PRs
 
 If you want users to connect GitHub, install the app on repos/orgs, clone private repos, push branches, or open PRs, add these GitHub App values:
@@ -137,6 +149,9 @@ Recommended path: deploy this repo at the repo root on Vercel, then layer on aut
    ```env
    NEXT_PUBLIC_VERCEL_APP_CLIENT_ID=
    VERCEL_APP_CLIENT_SECRET=
+   # Optional lock-down (comma-separated)
+   VERCEL_ALLOWED_USER_IDS=
+   VERCEL_ALLOWED_EMAILS=
    ```
 
 9. If you want the full GitHub-enabled coding-agent flow, create a GitHub App using:
